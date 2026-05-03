@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const schema = new mongoose.Schema(
   {
-    chat: {
+    chatId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Chat",
       required: true,
@@ -23,9 +23,10 @@ const schema = new mongoose.Schema(
         ref: "User",
       },
     ],
+    default: [],
   },
   { timestamps: true },
 );
 
-schema.index({ chat: 1, createdAt: -1 });
+schema.index({ chatId: 1, createdAt: -1 });
 export default mongoose.model("Message", schema);

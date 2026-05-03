@@ -2,30 +2,14 @@ import { User } from "../model/index.js";
 import chatController from "./chatController.js";
 import envConfig from "../config/envConfig.js";
 import jwt from "jsonwebtoken";
-
-const findOrCreatePrivateChat = async (senderId, receiverId) => {
-  const membersHash = [senderId, receiverId].sort().join("_");
-
-  let chat = await Chat.findOne({ membersHash });
-
-  if (!chat) {
-    chat = await Chat.create({
-      type: "private",
-      participants: [senderId, receiverId],
-      membersHash,
-    });
-  }
-
-  return chat;
-};
+let onlineUsers = new Map();
 
 const getHandshakeToken = (socket) => {
   const authToken = socket.handshake.auth?.token;
-  const headerToken = socket.handshake.headers?.authorization;
+  const headerToken = socket.handshake.headers?.token;
   const token = authToken || headerToken;
 
   if (!token) return null;
-
   return token.startsWith("Bearer ") ? token.slice(7) : token;
 };
 
@@ -53,8 +37,6 @@ const socketAuth = async (socket, next) => {
       return next(new Error("Unauthorized: User not found"));
     }
 
-    // Attach user to socket
-    socket.user = user;
     socket.data = socket.data || {};
     socket.data.user = user;
 
@@ -68,8 +50,18 @@ const socketAuth = async (socket, next) => {
 const chatEvents = {
   "create-group-chat": (socket, io, data) =>
     chatController.createGroupChat(socket, io, data),
+  "create-private-chat": (socket, io, data) =>
+    chatController.createPrivateChat(socket, io, data),
   "chat-list": async (socket, io, data) =>
-    await chatController.chatList(socket, io, data),
+    await chatController.chatList(socket, io),
+  "message-list": async (socket, io, data) =>
+    await chatController.messageList(socket, io, data),
+  "send-message": async (socket, io, data) =>
+    await chatController.sendMessage(socket, io, data),
+  "mark-messages-as-read": async (socket, io, data) =>
+    await chatController.markAllMessagesAsRead(socket, io, data),
+  "user-active-status": async (socket, io, data) =>
+    await chatController.getUserStatus(socket, io, data),
 };
 
 const initializeSocket = (io) => {
@@ -77,15 +69,13 @@ const initializeSocket = (io) => {
 
   io.on("connection", (socket) => {
     try {
-      console.log(`User connected: ${socket.user._id}`);
+      const userId = socket.data.user?._id?.toString();
+      if (!onlineUsers.has(userId)) {
+        onlineUsers.set(userId, new Set());
+      }
 
-      // Join personal room
-      socket.join(socket.user._id.toString());
-
-      // Broadcast user online
-      io.emit("user-online", {
-        userId: socket.user._id,
-      });
+      onlineUsers.get(userId).add(socket.id);
+      io.emit("user:online", { userId });
 
       Object.entries(chatEvents).forEach(([event, handler]) => {
         socket.on(event, async (data) => {
@@ -103,11 +93,16 @@ const initializeSocket = (io) => {
       });
 
       socket.on("disconnect", () => {
-        console.log(`User disconnected: ${socket.user._id}`);
-
-        io.emit("user-offline", {
-          userId: socket.user._id,
-        });
+        const userId = socket.data.user?._id?.toString();
+        if (!userId) return;
+        const userSockets = onlineUsers.get(userId);
+        if (userSockets) {
+          userSockets.delete(socket.id);
+          if (userSockets.size === 0) {
+            onlineUsers.delete(userId);
+            io.emit("user:offline", { userId });
+          }
+        }
       });
     } catch (err) {
       console.error("Connection error:", err.message);
@@ -116,4 +111,4 @@ const initializeSocket = (io) => {
   });
 };
 
-export { initializeSocket };
+export { initializeSocket, onlineUsers };
