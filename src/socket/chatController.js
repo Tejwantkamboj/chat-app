@@ -81,7 +81,6 @@ const createPrivateChat = async (socket, io, data) => {
         type: "private",
         participants,
       });
-      await newChatCreated(io, chat._id);
     }
   } catch (error) {
     console.error(error);
